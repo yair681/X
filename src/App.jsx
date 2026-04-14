@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { createWorker } from 'tesseract.js'
-import { requestNotificationPermission, scheduleDailyReminder, cancelDailyReminder, checkWebNotificationTime } from './notifications.js'
+import { requestNotificationPermission, scheduleDailyReminder, cancelDailyReminder, checkWebNotificationTime, sendTestNotification } from './notifications.js'
+
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || localStorage.getItem('groq_api_key') || ''
 import {
   ShoppingCart,
   History,
@@ -79,39 +80,48 @@ const CAT_COLOR = {
   luxury: 'bg-red-900/60 text-red-400 border-red-800',
 }
 
-// ─── Receipt Scanning ─────────────────────────────────────────────────────────
-async function scanReceiptImage(imageDataUrl) {
-  const worker = await createWorker(['heb', 'eng'], 1, { logger: () => {} })
-  const { data: { text } } = await worker.recognize(imageDataUrl)
-  await worker.terminate()
-  return parseReceiptText(text)
-}
-
-function parseReceiptText(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  const products = []
-  const priceRegex = /(\d{1,4}[.,]\d{2})/
-  const skipWords = ['סה"כ','סכום','מע"מ','הנחה','עודף','שולם','סך','total','vat','change','paid','subtotal','tax','קבלה','חשבונית']
-
-  for (const line of lines) {
-    const match = line.match(priceRegex)
-    if (!match) continue
-    const price = parseFloat(match[1].replace(',', '.'))
-    if (price <= 0 || price > 999) continue
-    let name = line.replace(match[0], '').replace(/[*×x]/gi, '').replace(/\s{2,}/g, ' ').trim()
-    name = name.replace(/^\d+\s*[xX×]\s*/, '').trim()
-    if (name.length < 2) continue
-    if (skipWords.some(w => name.toLowerCase().includes(w.toLowerCase()))) continue
-    products.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-      name,
+// ─── Receipt Scanning (Groq Vision) ──────────────────────────────────────────
+async function scanReceiptWithGroq(imageDataUrl) {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+            {
+              type: 'text',
+              text: 'זוהי קבלה מסופרמרקט. חלץ את כל המוצרים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם מוצר","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק מוצרים בודדים.',
+            },
+          ],
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 1024,
+    }),
+  })
+  if (!res.ok) throw new Error(`Groq error ${res.status}`)
+  const data = await res.json()
+  const text = data.choices?.[0]?.message?.content || ''
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) return []
+  const parsed = JSON.parse(jsonMatch[0])
+  return (parsed.products || [])
+    .filter(p => p.name && p.price > 0 && p.price < 1000)
+    .map(p => ({
+      id: generateId(),
+      name: String(p.name).trim(),
       quantity: 1,
       unit: "יח'",
-      price,
-      category: categorize(name)
-    })
-  }
-  return products
+      price: parseFloat(p.price),
+      category: categorize(p.name),
+    }))
 }
 
 // ─── Unit Price Logic ─────────────────────────────────────────────────────────
@@ -305,13 +315,18 @@ function TabShopping({ onSave }) {
       const reader = new FileReader()
       reader.onload = async (ev) => {
         try {
-          const extracted = await scanReceiptImage(ev.target.result)
+          const extracted = await scanReceiptWithGroq(ev.target.result)
           if (extracted.length === 0) {
             showToast('לא נמצאו מוצרים בקבלה, נסה שוב')
           } else {
-            setProducts(prev => [...prev, ...extracted])
+            setProducts(prev => {
+              const filtered = prev.filter(p => p.name.trim())
+              return [...filtered, ...extracted]
+            })
             showToast(`נמצאו ${extracted.length} מוצרים מהקבלה ✓`)
           }
+        } catch {
+          showToast('שגיאה בניתוח הקבלה — בדוק חיבור אינטרנט')
         } finally {
           setScanning(false)
           if (cameraInputRef.current) cameraInputRef.current.value = ''
@@ -320,7 +335,7 @@ function TabShopping({ onSave }) {
       reader.readAsDataURL(file)
     } catch {
       setScanning(false)
-      showToast('שגיאה בניתוח הקבלה')
+      showToast('שגיאה בקריאת התמונה')
     }
   }
 
@@ -829,6 +844,10 @@ function NotificationCard() {
   const [notifEnabled, setNotifEnabled] = useState(() =>
     localStorage.getItem('notifications_enabled') === 'true'
   )
+  const [notifHour, setNotifHour] = useState(() =>
+    parseInt(localStorage.getItem('notification_hour') || '20', 10)
+  )
+  const [testing, setTesting] = useState(false)
 
   async function handleNotifToggle() {
     if (notifEnabled) {
@@ -838,7 +857,7 @@ function NotificationCard() {
     } else {
       const granted = await requestNotificationPermission()
       if (granted) {
-        const scheduled = await scheduleDailyReminder()
+        const scheduled = await scheduleDailyReminder(notifHour)
         if (scheduled) {
           setNotifEnabled(true)
           localStorage.setItem('notifications_enabled', 'true')
@@ -849,13 +868,34 @@ function NotificationCard() {
     }
   }
 
+  async function handleHourChange(h) {
+    setNotifHour(h)
+    localStorage.setItem('notification_hour', String(h))
+    if (notifEnabled) {
+      await scheduleDailyReminder(h)
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true)
+    const granted = await requestNotificationPermission()
+    if (granted) {
+      await sendTestNotification()
+    } else {
+      alert('אין הרשאת התראות. הפעל את המתג תחילה.')
+    }
+    setTimeout(() => setTesting(false), 2000)
+  }
+
+  const hours = Array.from({ length: 18 }, (_, i) => i + 6) // 6:00–23:00
+
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 mt-4">
+    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+      <p className="font-semibold text-sm">תזכורת יומית</p>
+
+      {/* Toggle row */}
       <div className="flex items-center justify-between">
-        <div>
-          <p className="font-semibold text-sm">תזכורת יומית</p>
-          <p className="text-xs text-gray-500 mt-0.5">כל יום ב-20:00 — הכנסת הוצאות</p>
-        </div>
+        <p className="text-xs text-gray-400">הפעל תזכורת</p>
         <button
           onClick={handleNotifToggle}
           className={`relative w-12 h-6 rounded-full transition-colors ${notifEnabled ? 'bg-blue-600' : 'bg-gray-700'}`}
@@ -863,6 +903,33 @@ function NotificationCard() {
           <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${notifEnabled ? 'right-0.5' : 'left-0.5'}`} />
         </button>
       </div>
+
+      {/* Hour picker */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-400">שעת התזכורת</p>
+        <select
+          value={notifHour}
+          onChange={e => handleHourChange(parseInt(e.target.value, 10))}
+          className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500"
+        >
+          {hours.map(h => (
+            <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Test button */}
+      <button
+        onClick={handleTest}
+        disabled={testing}
+        className="w-full bg-gray-800 hover:bg-gray-700 active:scale-95 disabled:opacity-50 transition-all py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2"
+      >
+        {testing ? (
+          <><div className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> שולח...</>
+        ) : (
+          <>🔔 שלח התראת בדיקה</>
+        )}
+      </button>
     </div>
   )
 }

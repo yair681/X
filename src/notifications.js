@@ -1,17 +1,12 @@
 // Handles both Capacitor (native APK) and Web Notifications API
 
-const DAILY_HOUR = 20 // 8 PM
-const DAILY_MINUTE = 0
-
 export async function requestNotificationPermission() {
   try {
-    // Try Capacitor native first
     if (window.Capacitor?.isNativePlatform?.()) {
       const { LocalNotifications } = await import('@capacitor/local-notifications')
       const status = await LocalNotifications.requestPermissions()
       return status.display === 'granted'
     }
-    // Web Notifications fallback
     if ('Notification' in window) {
       const permission = await Notification.requestPermission()
       return permission === 'granted'
@@ -22,20 +17,18 @@ export async function requestNotificationPermission() {
   return false
 }
 
-export async function scheduleDailyReminder() {
+export async function scheduleDailyReminder(hour = 20) {
   try {
+    localStorage.setItem('notification_hour', String(hour))
+
     if (window.Capacitor?.isNativePlatform?.()) {
       const { LocalNotifications } = await import('@capacitor/local-notifications')
 
-      // Cancel existing
       await LocalNotifications.cancel({ notifications: [{ id: 1 }] }).catch(() => {})
 
-      // Schedule for today at 20:00, repeat daily
       const now = new Date()
       const scheduledTime = new Date()
-      scheduledTime.setHours(DAILY_HOUR, DAILY_MINUTE, 0, 0)
-
-      // If already past 20:00 today, schedule for tomorrow
+      scheduledTime.setHours(hour, 0, 0, 0)
       if (scheduledTime <= now) {
         scheduledTime.setDate(scheduledTime.getDate() + 1)
       }
@@ -46,11 +39,7 @@ export async function scheduleDailyReminder() {
             id: 1,
             title: '🛒 תקציב סופר',
             body: 'זמן להכניס את הוצאות היום! אל תשכח לתעד את הקניות.',
-            schedule: {
-              at: scheduledTime,
-              repeats: true,
-              every: 'day',
-            },
+            schedule: { at: scheduledTime, repeats: true, every: 'day' },
             sound: 'default',
             smallIcon: 'ic_stat_icon_config_sample',
             iconColor: '#1d4ed8',
@@ -60,10 +49,7 @@ export async function scheduleDailyReminder() {
       return true
     }
 
-    // Web fallback — can only show immediate notification, no reliable daily scheduling
-    // We store preference and check on app load
     localStorage.setItem('notifications_enabled', 'true')
-    localStorage.setItem('notification_hour', String(DAILY_HOUR))
     return true
   } catch (e) {
     console.warn('Schedule notification error:', e)
@@ -82,18 +68,46 @@ export function cancelDailyReminder() {
   } catch (e) {}
 }
 
-// Called on every web app load to check if we should show reminder
+export async function sendTestNotification() {
+  try {
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const { LocalNotifications } = await import('@capacitor/local-notifications')
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: 99,
+            title: '🛒 תקציב סופר — בדיקה',
+            body: 'התראות עובדות בהצלחה! 🎉',
+            schedule: { at: new Date(Date.now() + 1000) },
+            sound: 'default',
+            smallIcon: 'ic_stat_icon_config_sample',
+            iconColor: '#1d4ed8',
+          },
+        ],
+      })
+    } else if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('🛒 תקציב סופר — בדיקה', {
+        body: 'התראות עובדות בהצלחה! 🎉',
+        icon: '/vite.svg',
+      })
+    }
+  } catch (e) {
+    console.warn('Test notification error:', e)
+  }
+}
+
 export function checkWebNotificationTime() {
-  if (window.Capacitor?.isNativePlatform?.()) return // native handles it
+  if (window.Capacitor?.isNativePlatform?.()) return
   if (localStorage.getItem('notifications_enabled') !== 'true') return
   if (Notification?.permission !== 'granted') return
 
   const lastShown = localStorage.getItem('notification_last_shown')
   const today = new Date().toDateString()
-  if (lastShown === today) return // already shown today
+  if (lastShown === today) return
 
+  const hour = parseInt(localStorage.getItem('notification_hour') || '20', 10)
   const now = new Date()
-  if (now.getHours() >= DAILY_HOUR) {
+  if (now.getHours() >= hour) {
     new Notification('🛒 תקציב סופר', {
       body: 'זמן להכניס את הוצאות היום! אל תשכח לתעד את הקניות.',
       icon: '/vite.svg',
