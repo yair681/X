@@ -1,0 +1,6 @@
+{
+  "appId": "com.yair681.budgetx",
+  "appName": "תקציב סופר",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

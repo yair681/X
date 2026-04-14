@@ -1,0 +1,102 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Install Capacitor
+        run: npm install @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5
+
+      - name: Add Android platform
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Fix Gradle wrapper
+        run: |
+          sed -i 's|gradle-.*-all|gradle-8.7-all|g' android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Fix Gradle JVM args
+        run: |
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> android/gradle.properties
+          echo "org.gradle.daemon=false" >> android/gradle.properties
+
+      - name: Generate signing keystore
+        run: |
+          keytool -genkey -v \
+            -keystore release.jks \
+            -alias budget-release \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass BudgetX2024 \
+            -keypass BudgetX2024 \
+            -dname "CN=Budget App, O=Yair, L=Israel, C=IL"
+
+      - name: Build release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Sign APK
+        run: |
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks release.jks \
+            --ks-pass pass:BudgetX2024 \
+            --key-pass pass:BudgetX2024 \
+            --ks-key-alias budget-release \
+            --out budget-app.apk \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Get version tag
+        id: tag
+        run: echo "tag=v$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "תקציב סופר ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## תקציב סופר — APK להתקנה
+
+            ### הורדה והתקנה:
+            1. הורד את הקובץ `budget-app.apk`
+            2. העבר לטלפון
+            3. פתח והתקן (אפשר "מקורות לא ידועים" בהגדרות)
+          files: budget-app.apk
+          draft: false
+          prerelease: false
