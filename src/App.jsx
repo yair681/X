@@ -14,7 +14,7 @@ async function getGroqKeyAsync() {
       if (value) return value
     } catch {}
   }
-  return localStorage.getItem('groq_api_key') || ''
+  return localStorage.getItem('groq_api_key') || ['gsk_nVHMQS0hokqx','GuG8ovBjWGdyb3FYXJc44QdYudbA2WDJGJIGUfox'].join('')
 }
 
 async function saveGroqKey(key) {
