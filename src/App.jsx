@@ -54,12 +54,30 @@ function formatDate(iso) {
 }
 
 // ─── Category Logic ───────────────────────────────────────────────────────────
+// basics = הכרחי: מזון, תרופות, ניקיון, היגיינה, חשמל בית
+// luxury = מותרות: אלכוהול, אופנה יקרה, תכשיטים, גאדג'טים
+// convenience = נוחות: כל השאר
+
 const BASICS_WORDS = [
+  // מזון בסיסי
   'חלב','לחם','ביצ','עגב','בצל','גזר','תפוח','אורז','פסטה','קמח','סוכר','מלח','שמן','מים',
   'חמאה','גבינ','יוגורט','קוטג','שמנת','כרוב','חסה','מלפפ','פלפל','שום','לימון','בננ','תפו"א',
+  // ניקיון והיגיינה
+  'סבון','שמפו','נייר טואלט','מטליות','אבקת כביסה','נוזל כלים','מרכך','משחת שיניים','דאודורנט',
+  // תרופות ובריאות
+  'תרופ','אקמול','ויטמין','תחבושת','משחה','קרם',
+  // חשמל בסיסי
+  'נורה','סוללה','שקע',
 ]
 const LUXURY_WORDS = [
-  'יין','בירה','וויסקי','קוניאק','וודקה','אלכוהול','סושי','נקניק','סלמי','פרושוטו','שמפניה',
+  // אלכוהול
+  'יין','בירה','וויסקי','קוניאק','וודקה','אלכוהול','שמפניה','ליקר',
+  // אופנה יוקרה / תכשיטים
+  'תכשיט','טבעת','שרשרת','עגיל','שעון יוקרה','מותג',
+  // גאדג'טים ואלקטרוניקה יקרה
+  'אייפון','samsung','iphone','playstation','xbox','airpods',
+  // מסעדות / פינוקים
+  'סושי','לובסטר','פרושוטו','קוויאר','טרופל',
 ]
 
 function categorize(name) {
@@ -73,7 +91,7 @@ function categorize(name) {
   return 'convenience'
 }
 
-const CAT_LABEL = { basics: 'בסיס', convenience: 'נוחות', luxury: 'מותרות' }
+const CAT_LABEL = { basics: 'הכרחי', convenience: 'נוחות', luxury: 'מותרות' }
 const CAT_COLOR = {
   basics: 'bg-green-900/60 text-green-400 border-green-800',
   convenience: 'bg-orange-900/60 text-orange-400 border-orange-800',
@@ -97,7 +115,7 @@ async function scanReceiptWithGroq(imageDataUrl) {
             { type: 'image_url', image_url: { url: imageDataUrl } },
             {
               type: 'text',
-              text: 'זוהי קבלה מסופרמרקט. חלץ את כל המוצרים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם מוצר","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק מוצרים בודדים.',
+              text: 'זוהי קבלה / חשבונית. חלץ את כל הפריטים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם פריט","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק פריטים בודדים.',
             },
           ],
         },
@@ -407,7 +425,7 @@ function TabShopping({ onSave }) {
             type="text"
             value={store}
             onChange={(e) => setStore(e.target.value)}
-            placeholder="שם הסופרמרקט"
+            placeholder="למשל: זארה, שופרסל, אמזון..."
           />
         </div>
       </div>
@@ -576,10 +594,10 @@ function TabShopping({ onSave }) {
               <div className="bg-green-950/50 border border-green-800/50 rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-3 h-3 rounded-full bg-green-500 inline-block" />
-                  <span className="font-semibold text-green-400">בסיס</span>
+                  <span className="font-semibold text-green-400">הכרחי</span>
                 </div>
-                <p className="text-sm text-gray-300">מוצרים שחייבים לקנות כל שבוע</p>
-                <p className="text-xs text-gray-500 mt-1">חלב, לחם, ביצים, ירקות, פירות, אורז, פסטה, קמח, סוכר, מלח, שמן, מים, חמאה, גבינה, יוגורט</p>
+                <p className="text-sm text-gray-300">פריטים הכרחיים לחיי יומיום</p>
+                <p className="text-xs text-gray-500 mt-1">מזון בסיסי, תרופות, ניקיון, היגיינה, חשמל בית, כלי עבודה</p>
               </div>
 
               <div className="bg-orange-950/50 border border-orange-800/50 rounded-xl p-4">
@@ -587,8 +605,8 @@ function TabShopping({ onSave }) {
                   <span className="w-3 h-3 rounded-full bg-orange-500 inline-block" />
                   <span className="font-semibold text-orange-400">נוחות</span>
                 </div>
-                <p className="text-sm text-gray-300">מוצרים שנוח אבל לא חייב</p>
-                <p className="text-xs text-gray-500 mt-1">שוקולד, חטיפים, גלידה, אוכל מוכן, קוקה קולה, מיצים, ביסלי, במבה, קפה, תה</p>
+                <p className="text-sm text-gray-300">קניות שנוח לעשות אבל לא חייב</p>
+                <p className="text-xs text-gray-500 mt-1">ביגוד, אוכל מוכן, גאדג'טים קטנים, בידור, ספרים, קוסמטיקה</p>
               </div>
 
               <div className="bg-red-950/50 border border-red-800/50 rounded-xl p-4">
@@ -596,11 +614,11 @@ function TabShopping({ onSave }) {
                   <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
                   <span className="font-semibold text-red-400">מותרות</span>
                 </div>
-                <p className="text-sm text-gray-300">מוצרים יקרים / לפינוק</p>
-                <p className="text-xs text-gray-500 mt-1">יין, בירה, אלכוהול, סושי, נקניקים יקרים, גבינות מיוחדות</p>
+                <p className="text-sm text-gray-300">קניות יקרות / פינוק</p>
+                <p className="text-xs text-gray-500 mt-1">אלכוהול, תכשיטים, אלקטרוניקה יקרה, מסעדות יוקרה, מוצרי מותג</p>
               </div>
 
-              <p className="text-xs text-gray-600 text-center">הסיווג נעשה אוטומטית לפי שם המוצר — תוכל לשנות ידנית</p>
+              <p className="text-xs text-gray-600 text-center">הסיווג נעשה אוטומטית לפי שם הפריט — תוכל לשנות ידנית</p>
             </div>
 
             <button
@@ -623,7 +641,7 @@ function TabHistory({ trips, onDelete }) {
   const sorted = [...trips].sort((a, b) => b.date.localeCompare(a.date))
 
   if (sorted.length === 0) {
-    return <EmptyState icon={History} title="אין קניות עדיין" subtitle="הוסף קנייה ראשונה בלשונית 'קנייה'" />
+    return <EmptyState icon={History} title="אין רשומות עדיין" subtitle="הוסף קנייה ראשונה בלשונית 'קנייה'" />
   }
 
   return (
@@ -773,7 +791,7 @@ function TabAnalysis({ trips, monthlyBudget, onBudgetChange }) {
       {/* Category cards */}
       <div className="grid grid-cols-3 gap-2">
         {[
-          { key: 'basics', label: 'בסיס', color: 'border-green-800 bg-green-950/40', text: 'text-green-400' },
+          { key: 'basics', label: 'הכרחי', color: 'border-green-800 bg-green-950/40', text: 'text-green-400' },
           { key: 'convenience', label: 'נוחות', color: 'border-orange-800 bg-orange-950/40', text: 'text-orange-400' },
           { key: 'luxury', label: 'מותרות', color: 'border-red-800 bg-red-950/40', text: 'text-red-400' },
         ].map(({ key, label, color, text }) => {
@@ -792,7 +810,7 @@ function TabAnalysis({ trips, monthlyBudget, onBudgetChange }) {
       {/* Top 5 products */}
       {top5.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">5 מוצרים יקרים ביותר החודש</h3>
+          <h3 className="text-sm font-semibold text-gray-300 mb-3">5 פריטים יקרים ביותר החודש</h3>
           <div className="space-y-2">
             {top5.map((item, i) => (
               <div key={i} className="flex items-center justify-between">
@@ -1019,11 +1037,11 @@ export default function App() {
       <header className="bg-gray-950/90 backdrop-blur border-b border-gray-800/60 px-4 py-4 sticky top-0 z-10">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold leading-none">ניהול תקציב סופרמרקט</h1>
+            <h1 className="text-lg font-bold leading-none">ניהול תקציב קניות</h1>
             <p className="text-xs text-gray-500 mt-0.5">
               {tab === 'shopping' && 'הוסף קנייה חדשה'}
               {tab === 'history' && 'היסטוריית קניות'}
-              {tab === 'analysis' && 'ניתוח וסטטיסטיקות'}
+              {tab === 'analysis' && 'ניתוח הוצאות'}
               {tab === 'alerts' && 'חריגות מחיר'}
             </p>
           </div>
