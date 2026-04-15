@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { requestNotificationPermission, scheduleDailyReminder, cancelDailyReminder, checkWebNotificationTime, sendTestNotification } from './notifications.js'
+import { requestNotificationPermission, scheduleDailyReminder, cancelDailyReminder, checkWebNotificationTime, sendTestNotification, sendTipNotification } from './notifications.js'
 
 function getGroqKey() {
   return import.meta.env.VITE_GROQ_API_KEY || localStorage.getItem('groq_api_key') || ''
@@ -40,6 +40,9 @@ import {
   AlertTriangle,
   Camera,
   Settings,
+  MessageSquare,
+  Send,
+  Bot,
 } from 'lucide-react'
 
 // ─── Storage (Capacitor Preferences + localStorage fallback) ──────────────────
@@ -1304,6 +1307,210 @@ function TabSettings() {
   )
 }
 
+// ─── AI Chat ──────────────────────────────────────────────────────────────────
+function buildSpendingContext(trips, monthlyBudget) {
+  const now = new Date()
+  const currentMonth = now.toISOString().slice(0, 7)
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000)
+
+  const thisMonthTrips = trips.filter(t => t.date.startsWith(currentMonth))
+  const thisMonthTotal = thisMonthTrips.reduce((s, t) => s + t.total, 0)
+  const remaining = monthlyBudget - thisMonthTotal
+
+  const catTotals = { basics: 0, convenience: 0, luxury: 0 }
+  thisMonthTrips.forEach(t => t.products.forEach(p => { catTotals[p.category] = (catTotals[p.category] || 0) + p.price }))
+
+  const weekTrips = trips.filter(t => new Date(t.date) >= weekAgo)
+  const weekTotal = weekTrips.reduce((s, t) => s + t.total, 0)
+
+  const allProducts = trips.flatMap(t => t.products)
+  const topItems = Object.entries(
+    allProducts.reduce((acc, p) => { acc[p.name] = (acc[p.name] || 0) + p.price; return acc }, {})
+  ).sort((a, b) => b[1] - a[1]).slice(0, 5)
+
+  const stores = Object.entries(
+    trips.reduce((acc, t) => { acc[t.store] = (acc[t.store] || 0) + t.total; return acc }, {})
+  ).sort((a, b) => b[1] - a[1]).slice(0, 3)
+
+  return `נתוני הוצאות של המשתמש:
+- תקציב חודשי: ₪${monthlyBudget}
+- הוצאות החודש (${currentMonth}): ₪${Math.round(thisMonthTotal)} (${Math.round(thisMonthTotal / monthlyBudget * 100)}% מהתקציב)
+- נותר החודש: ₪${Math.round(remaining)}
+- הוצאות השבוע האחרון: ₪${Math.round(weekTotal)}
+- פירוט קטגוריות החודש: הכרחי ₪${Math.round(catTotals.basics)}, נוחות ₪${Math.round(catTotals.convenience)}, מותרות ₪${Math.round(catTotals.luxury)}
+- 5 פריטים שקנה הכי הרבה: ${topItems.map(([n, v]) => `${n} (₪${Math.round(v)})`).join(', ')}
+- חנויות מובילות לפי הוצאה: ${stores.map(([s, v]) => `${s} ₪${Math.round(v)}`).join(', ')}
+- סה"כ קניות: ${trips.length}`
+}
+
+async function callGroqChat(messages, key) {
+  const payload = {
+    model: 'llama-3.3-70b-versatile',
+    messages,
+    temperature: 0.7,
+    max_tokens: 512,
+  }
+  if (window.Capacitor?.isNativePlatform?.()) {
+    const { CapacitorHttp } = await import('@capacitor/core')
+    const res = await CapacitorHttp.request({
+      method: 'POST',
+      url: 'https://api.groq.com/openai/v1/chat/completions',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      data: payload,
+    })
+    if (res.status !== 200) throw new Error(`Groq ${res.status}`)
+    return res.data?.choices?.[0]?.message?.content || ''
+  }
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`Groq ${res.status}`)
+  const data = await res.json()
+  return data.choices?.[0]?.message?.content || ''
+}
+
+export async function generateDailyTip(trips, monthlyBudget) {
+  try {
+    const lastTip = localStorage.getItem('last_tip_date')
+    const today = new Date().toDateString()
+    if (lastTip === today) return null // already sent today
+
+    const key = await getGroqKeyAsync()
+    if (!key) return null
+
+    const context = buildSpendingContext(trips, monthlyBudget)
+    const tip = await callGroqChat([
+      { role: 'system', content: `אתה יועץ פיננסי חכם. בהתבסס על נתוני ההוצאות, תן טיפ קצר ומועיל (2-3 משפטים) שיעזור לחסוך כסף. היה ספציפי לנתונים. ענה בעברית בלבד. אל תכתוב כותרת, רק הטיפ עצמו.\n\n${context}` },
+      { role: 'user', content: 'תן לי טיפ חיסכון מותאם אישית להיום' },
+    ], key)
+
+    if (tip) {
+      localStorage.setItem('last_tip_date', today)
+      localStorage.setItem('last_tip_text', tip)
+    }
+    return tip
+  } catch {
+    return null
+  }
+}
+
+// ─── TAB: צ'אט AI ─────────────────────────────────────────────────────────────
+function TabChat({ trips, monthlyBudget }) {
+  const INITIAL = { role: 'assistant', content: 'שלום! אני העוזר התקציבי שלך 🤖\nאני רואה את כל ההוצאות שלך ויכול לעזור עם המלצות, ניתוח, ותכנון חיסכון.\n\nשאל אותי כל שאלה!' }
+  const [messages, setMessages] = useState([INITIAL])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const bottomRef = useRef(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  async function send() {
+    const text = input.trim()
+    if (!text || loading) return
+    setInput('')
+
+    const userMsg = { role: 'user', content: text }
+    const newMessages = [...messages, userMsg]
+    setMessages(newMessages)
+    setLoading(true)
+
+    try {
+      const key = await getGroqKeyAsync()
+      const context = buildSpendingContext(trips, monthlyBudget)
+      const systemPrompt = `אתה עוזר פיננסי חכם ואישי. ענה תמיד בעברית. היה ספציפי, ידידותי ומועיל. השתמש בנתוני ההוצאות הבאים כדי לתת תשובות מותאמות אישית:\n\n${context}`
+
+      const apiMessages = [
+        { role: 'system', content: systemPrompt },
+        ...newMessages.filter(m => m !== INITIAL).map(m => ({ role: m.role, content: m.content })),
+      ]
+
+      const reply = await callGroqChat(apiMessages, key)
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `שגיאה: ${err.message}` }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const suggestions = ['כמה הוצאתי החודש?', 'איפה אני יכול לחסוך?', 'מה הפריטים היקרים שלי?', 'תן לי תכנית חיסכון']
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-13rem)]">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto space-y-3 pb-2">
+        {messages.map((m, i) => (
+          <div key={i} className={`flex gap-2 ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+            {m.role === 'assistant' && (
+              <div className="w-7 h-7 rounded-xl bg-blue-700 flex items-center justify-center shrink-0 mt-1">
+                <Bot className="w-4 h-4" />
+              </div>
+            )}
+            <div className={`max-w-[80%] px-3 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+              m.role === 'user'
+                ? 'bg-blue-600 text-white rounded-tl-md'
+                : 'bg-gray-900 border border-gray-800 text-gray-100 rounded-tr-md'
+            }`}>
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex gap-2">
+            <div className="w-7 h-7 rounded-xl bg-blue-700 flex items-center justify-center shrink-0">
+              <Bot className="w-4 h-4" />
+            </div>
+            <div className="bg-gray-900 border border-gray-800 px-4 py-3 rounded-2xl rounded-tr-md flex gap-1 items-center">
+              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{animationDelay:'0ms'}} />
+              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{animationDelay:'150ms'}} />
+              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{animationDelay:'300ms'}} />
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Quick suggestions */}
+      {messages.length === 1 && (
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+          {suggestions.map(s => (
+            <button
+              key={s}
+              onClick={() => { setInput(s); }}
+              className="whitespace-nowrap text-xs bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-xl text-gray-300 active:scale-95 transition-all shrink-0"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <div className="flex gap-2 pt-2 border-t border-gray-800">
+        <input
+          type="text"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && send()}
+          placeholder="שאל שאלה על ההוצאות שלך..."
+          className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <button
+          onClick={send}
+          disabled={!input.trim() || loading}
+          className="w-10 h-10 bg-blue-600 disabled:opacity-40 rounded-xl flex items-center justify-center active:scale-95 transition-all"
+        >
+          <Send className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function getLuxuryWeekTotal(trips) {
   const now = new Date()
@@ -1322,7 +1529,15 @@ export default function App() {
 
   // Load from Capacitor Preferences on native (overrides localStorage if found)
   useEffect(() => {
-    loadFromStorage().then(loaded => setState(loaded))
+    loadFromStorage().then(loaded => {
+      setState(loaded)
+      // send daily tip notification after data loads
+      setTimeout(() => {
+        generateDailyTip(loaded.trips, loaded.monthlyBudget).then(tip => {
+          if (tip) sendTipNotification(tip)
+        })
+      }, 3000)
+    })
     checkWebNotificationTime()
   }, [])
 
@@ -1356,7 +1571,8 @@ export default function App() {
 
   const NAV_TABS = [
     { id: 'shopping', icon: ShoppingCart, label: 'קנייה' },
-    { id: 'history', icon: History, label: 'היסטוריה', badge: state.trips.length || null },
+    { id: 'history', icon: History, label: 'היסטוריה' },
+    { id: 'chat', icon: MessageSquare, label: 'AI צ\'אט' },
     { id: 'analysis', icon: TrendingDown, label: 'ניתוח' },
     { id: 'alerts', icon: AlertCircle, label: 'התראות', badge: anomalyCount || null },
     { id: 'settings', icon: Settings, label: 'הגדרות' },
@@ -1373,6 +1589,7 @@ export default function App() {
               {tab === 'shopping' && 'הוסף קנייה חדשה'}
               {tab === 'history' && 'היסטוריית קניות'}
               {tab === 'analysis' && 'ניתוח הוצאות'}
+              {tab === 'chat' && 'עוזר AI מותאם אישית'}
               {tab === 'alerts' && 'חריגות מחיר'}
               {tab === 'settings' && 'הגדרות אפליקציה'}
             </p>
@@ -1397,6 +1614,9 @@ export default function App() {
             monthlyBudget={state.monthlyBudget}
             onBudgetChange={handleBudgetChange}
           />
+        )}
+        {tab === 'chat' && (
+          <TabChat trips={state.trips} monthlyBudget={state.monthlyBudget} />
         )}
         {tab === 'alerts' && (
           <TabAlerts trips={state.trips} />

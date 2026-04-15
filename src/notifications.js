@@ -101,6 +101,30 @@ export async function sendTestNotification() {
   }
 }
 
+export async function sendTipNotification(tip) {
+  try {
+    if (localStorage.getItem('notifications_enabled') !== 'true') return
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const { LocalNotifications } = await import('@capacitor/local-notifications')
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: 2,
+          title: '💡 טיפ חיסכון יומי',
+          body: tip,
+          schedule: { at: new Date(Date.now() + 1000) },
+          sound: 'default',
+          smallIcon: 'ic_stat_icon_config_sample',
+          iconColor: '#1d4ed8',
+        }],
+      })
+    } else if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('💡 טיפ חיסכון יומי', { body: tip, icon: '/vite.svg' })
+    }
+  } catch (e) {
+    console.warn('Tip notification error:', e)
+  }
+}
+
 // Called on every web app load — fires only at the chosen hour, once per day
 export function checkWebNotificationTime() {
   if (window.Capacitor?.isNativePlatform?.()) return // native handles scheduling
