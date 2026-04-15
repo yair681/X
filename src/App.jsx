@@ -166,18 +166,23 @@ async function compressImage(dataUrl, maxPx = 1200) {
 // ─── Receipt Scanning (Groq Vision) ──────────────────────────────────────────
 function parseGroqResponse(text) {
   const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return []
-  const parsed = JSON.parse(jsonMatch[0])
-  return (parsed.products || [])
-    .filter(p => p.name && p.price > 0 && p.price < 1000)
-    .map(p => ({
-      id: generateId(),
-      name: String(p.name).trim(),
-      quantity: 1,
-      unit: "יח'",
-      price: parseFloat(p.price),
-      category: categorize(p.name),
-    }))
+  if (!jsonMatch) return { store: '', products: [] }
+  try {
+    const parsed = JSON.parse(jsonMatch[0])
+    const products = (parsed.products || [])
+      .filter(p => p.name && p.price > 0 && p.price < 5000)
+      .map(p => ({
+        id: generateId(),
+        name: String(p.name).trim(),
+        quantity: 1,
+        unit: "יח'",
+        price: parseFloat(p.price),
+        category: categorize(p.name),
+      }))
+    return { store: parsed.store || '', products }
+  } catch {
+    return { store: '', products: [] }
+  }
 }
 
 async function scanReceiptWithGroq(imageDataUrl) {
@@ -193,7 +198,7 @@ async function scanReceiptWithGroq(imageDataUrl) {
       role: 'user',
       content: [
         { type: 'image_url', image_url: { url: compressed } },
-        { type: 'text', text: 'זוהי קבלה / חשבונית. חלץ את כל הפריטים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם פריט","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק פריטים בודדים.' },
+        { type: 'text', text: 'זוהי קבלה / חשבונית. חלץ: 1) שם החנות אם מופיע, 2) את כל הפריטים עם המחירים. החזר JSON בלבד: {"store":"שם חנות","products":[{"name":"שם פריט","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק פריטים בודדים.' },
       ],
     }],
     temperature: 0.1,
@@ -393,6 +398,117 @@ function emptyProduct() {
 
 const UNITS = ['יח\'', 'ק"ג', 'ל', 'גרם', 'מ"ל']
 
+// ─── Scan Review Modal ────────────────────────────────────────────────────────
+function ScanReviewModal({ result, onConfirm, onCancel }) {
+  const [items, setItems] = useState(result.products)
+  const [storeName, setStoreName] = useState(result.store)
+
+  function updateItem(id, field, value) {
+    setItems(prev => prev.map(p => {
+      if (p.id !== id) return p
+      const updated = { ...p, [field]: value }
+      if (field === 'name') updated.category = categorize(value)
+      return updated
+    }))
+  }
+
+  function removeItem(id) {
+    setItems(prev => prev.filter(p => p.id !== id))
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/85 z-50 flex flex-col" dir="rtl">
+      <div className="bg-gray-900 border-b border-gray-800 px-4 py-4 flex items-center justify-between">
+        <div>
+          <p className="font-bold text-base">סקירת פריטים מהקבלה</p>
+          <p className="text-xs text-gray-500 mt-0.5">ערוך לפני הוספה לרשימה</p>
+        </div>
+        <button onClick={onCancel} className="w-8 h-8 flex items-center justify-center rounded-xl bg-gray-800">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+        {/* Store name */}
+        {storeName !== undefined && (
+          <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 flex items-center gap-2">
+            <span className="text-xs text-gray-500 whitespace-nowrap">חנות:</span>
+            <input
+              type="text"
+              value={storeName}
+              onChange={e => setStoreName(e.target.value)}
+              className="flex-1 bg-transparent text-white text-sm outline-none"
+              placeholder="שם חנות (אופציונלי)"
+            />
+          </div>
+        )}
+
+        {items.map(p => (
+          <div key={p.id} className="bg-gray-800 border border-gray-700 rounded-xl p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={p.name}
+                onChange={e => updateItem(p.id, 'name', e.target.value)}
+                className="flex-1 bg-gray-700 rounded-lg px-2.5 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <span className={`text-xs px-2 py-1 rounded-lg border font-medium whitespace-nowrap ${CAT_COLOR[p.category]}`}>
+                {CAT_LABEL[p.category]}
+              </span>
+              <button onClick={() => removeItem(p.id)} className="w-7 h-7 bg-red-950/60 rounded-lg flex items-center justify-center">
+                <Trash2 className="w-3.5 h-3.5 text-red-400" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">מחיר:</span>
+              <div className="relative">
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">₪</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={p.price}
+                  onChange={e => updateItem(p.id, 'price', e.target.value)}
+                  className="w-24 bg-gray-700 rounded-lg pr-6 pl-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <select
+                value={p.category}
+                onChange={e => updateItem(p.id, 'category', e.target.value)}
+                className="bg-gray-700 rounded-lg px-2 py-1.5 text-xs text-white outline-none"
+              >
+                <option value="basics">הכרחי</option>
+                <option value="convenience">נוחות</option>
+                <option value="luxury">מותרות</option>
+              </select>
+            </div>
+          </div>
+        ))}
+
+        {items.length === 0 && (
+          <p className="text-center text-gray-500 text-sm py-8">כל הפריטים הוסרו</p>
+        )}
+      </div>
+
+      <div className="px-4 py-4 border-t border-gray-800 flex gap-3">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-3 rounded-xl text-sm font-semibold bg-gray-800 active:scale-95"
+        >
+          ביטול
+        </button>
+        <button
+          onClick={() => onConfirm({ store: storeName, products: items })}
+          disabled={items.length === 0}
+          className="flex-2 flex-1 py-3 rounded-xl text-sm font-semibold bg-blue-600 disabled:opacity-40 active:scale-95 flex items-center justify-center gap-2"
+        >
+          <Check className="w-4 h-4" />
+          הוסף {items.length} פריטים
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── TAB 1: קנייה ─────────────────────────────────────────────────────────────
 function TabShopping({ onSave }) {
   const [date, setDate] = useState(todayISO())
@@ -402,11 +518,13 @@ function TabShopping({ onSave }) {
   const [scanning, setScanning] = useState(false)
   const [showCategoryHelp, setShowCategoryHelp] = useState(false)
   const [toast, setToast] = useState('')
+  const [scannedResult, setScannedResult] = useState(null) // {store, products} for review modal
   const cameraInputRef = useRef(null)
+  const galleryInputRef = useRef(null)
 
   function showToast(msg) {
     setToast(msg)
-    setTimeout(() => setToast(''), 3000)
+    setTimeout(() => setToast(''), 3500)
   }
 
   async function handleReceiptScan(e) {
@@ -417,15 +535,11 @@ function TabShopping({ onSave }) {
       const reader = new FileReader()
       reader.onload = async (ev) => {
         try {
-          const extracted = await scanReceiptWithGroq(ev.target.result)
-          if (extracted.length === 0) {
+          const result = await scanReceiptWithGroq(ev.target.result)
+          if (result.products.length === 0) {
             showToast('לא נמצאו פריטים בקבלה, נסה שוב')
           } else {
-            setProducts(prev => {
-              const filtered = prev.filter(p => p.name.trim())
-              return [...filtered, ...extracted]
-            })
-            showToast(`נמצאו ${extracted.length} פריטים מהקבלה ✓`)
+            setScannedResult(result) // open review modal
           }
         } catch (err) {
           if (err.message === 'missing_key') {
@@ -440,6 +554,7 @@ function TabShopping({ onSave }) {
         } finally {
           setScanning(false)
           if (cameraInputRef.current) cameraInputRef.current.value = ''
+          if (galleryInputRef.current) galleryInputRef.current.value = ''
         }
       }
       reader.readAsDataURL(file)
@@ -447,6 +562,16 @@ function TabShopping({ onSave }) {
       setScanning(false)
       showToast('שגיאה בקריאת התמונה')
     }
+  }
+
+  function confirmScannedResult(editedResult) {
+    if (!store.trim() && editedResult.store) setStore(editedResult.store)
+    setProducts(prev => {
+      const filtered = prev.filter(p => p.name.trim())
+      return [...filtered, ...editedResult.products]
+    })
+    showToast(`נוספו ${editedResult.products.length} פריטים ✓`)
+    setScannedResult(null)
   }
 
   const updateProduct = (id, field, value) => {
@@ -615,22 +740,25 @@ function TabShopping({ onSave }) {
         </button>
 
         {/* hidden camera input */}
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={handleReceiptScan}
-        />
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleReceiptScan} />
+        {/* hidden gallery input */}
+        <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={handleReceiptScan} />
 
         <button
           type="button"
           onClick={() => cameraInputRef.current?.click()}
-          className="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 active:scale-95 transition-all px-4 py-3 rounded-xl text-sm font-semibold"
+          className="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 active:scale-95 transition-all px-3 py-3 rounded-xl text-sm font-semibold"
         >
           <Camera className="w-4 h-4" />
-          סרוק קבלה
+          מצלמה
+        </button>
+        <button
+          type="button"
+          onClick={() => galleryInputRef.current?.click()}
+          className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 active:scale-95 transition-all px-3 py-3 rounded-xl text-sm font-semibold"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+          גלריה
         </button>
       </div>
 
@@ -667,6 +795,15 @@ function TabShopping({ onSave }) {
           <p className="text-white font-semibold text-lg">מנתח קבלה...</p>
           <p className="text-gray-400 text-sm">אנא המתן</p>
         </div>
+      )}
+
+      {/* Scan review modal */}
+      {scannedResult && (
+        <ScanReviewModal
+          result={scannedResult}
+          onConfirm={confirmScannedResult}
+          onCancel={() => setScannedResult(null)}
+        />
       )}
 
       {/* Category help modal */}
@@ -1168,9 +1305,20 @@ function TabSettings() {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+function getLuxuryWeekTotal(trips) {
+  const now = new Date()
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000)
+  return trips
+    .filter(t => new Date(t.date) >= weekAgo)
+    .flatMap(t => t.products)
+    .filter(p => p.category === 'luxury')
+    .reduce((s, p) => s + p.price, 0)
+}
+
 export default function App() {
   const [state, setState] = useState(loadState)
   const [tab, setTab] = useState('shopping')
+  const [luxuryAlert, setLuxuryAlert] = useState('')
 
   // Load from Capacitor Preferences on native (overrides localStorage if found)
   useEffect(() => {
@@ -1184,7 +1332,15 @@ export default function App() {
   }, [state])
 
   const handleSaveTrip = useCallback((trip) => {
-    setState((prev) => ({ ...prev, trips: [trip, ...prev.trips] }))
+    setState((prev) => {
+      const newTrips = [trip, ...prev.trips]
+      const luxTotal = getLuxuryWeekTotal(newTrips)
+      if (luxTotal >= 500) {
+        setLuxuryAlert(`⚠️ הוצאת ₪${Math.round(luxTotal)} על מותרות השבוע!`)
+        setTimeout(() => setLuxuryAlert(''), 5000)
+      }
+      return { ...prev, trips: newTrips }
+    })
     setTab('history')
   }, [])
 
@@ -1247,6 +1403,13 @@ export default function App() {
         )}
         {tab === 'settings' && <TabSettings />}
       </main>
+
+      {/* Luxury alert toast */}
+      {luxuryAlert && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-red-900 border border-red-700 text-white text-sm px-5 py-3 rounded-2xl shadow-xl z-50 whitespace-nowrap">
+          {luxuryAlert}
+        </div>
+      )}
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-gray-950/95 backdrop-blur border-t border-gray-800/60 z-20">

@@ -46,6 +46,19 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Inject Android widget
+        run: |
+          PKG_DIR=android/app/src/main/java/com/yair681/budgetx
+          RES_DIR=android/app/src/main/res
+          cp android-patches/java/BudgetWidget.java $PKG_DIR/BudgetWidget.java
+          cp android-patches/res/layout/budget_widget.xml $RES_DIR/layout/budget_widget.xml
+          mkdir -p $RES_DIR/xml
+          cp android-patches/res/xml/budget_widget_info.xml $RES_DIR/xml/budget_widget_info.xml
+          cp android-patches/res/drawable/widget_background.xml $RES_DIR/drawable/widget_background.xml
+          MANIFEST=$PKG_DIR/../../../../../../AndroidManifest.xml
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i 's|</application>|<receiver android:name=".BudgetWidget" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/budget_widget_info"/></receiver></application>|' $MANIFEST
+
       - name: Fix Gradle wrapper
         run: |
           sed -i 's|gradle-.*-all|gradle-8.7-all|g' android/gradle/wrapper/gradle-wrapper.properties
