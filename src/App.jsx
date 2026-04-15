@@ -142,37 +142,7 @@ async function compressImage(dataUrl, maxPx = 1200) {
 }
 
 // ─── Receipt Scanning (Groq Vision) ──────────────────────────────────────────
-async function scanReceiptWithGroq(imageDataUrl) {
-  const key = getGroqKey()
-  if (!key) throw new Error('missing_key')
-  const compressed = await compressImage(imageDataUrl)
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${key}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: compressed } },
-            {
-              type: 'text',
-              text: 'זוהי קבלה / חשבונית. חלץ את כל הפריטים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם פריט","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק פריטים בודדים.',
-            },
-          ],
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 1024,
-    }),
-  })
-  if (!res.ok) throw new Error(`Groq error ${res.status}`)
-  const data = await res.json()
-  const text = data.choices?.[0]?.message?.content || ''
+function parseGroqResponse(text) {
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) return []
   const parsed = JSON.parse(jsonMatch[0])
@@ -186,6 +156,52 @@ async function scanReceiptWithGroq(imageDataUrl) {
       price: parseFloat(p.price),
       category: categorize(p.name),
     }))
+}
+
+async function scanReceiptWithGroq(imageDataUrl) {
+  const key = getGroqKey()
+  if (!key) throw new Error('missing_key')
+
+  let compressed = imageDataUrl
+  try { compressed = await compressImage(imageDataUrl) } catch {}
+
+  const payload = {
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: compressed } },
+        { type: 'text', text: 'זוהי קבלה / חשבונית. חלץ את כל הפריטים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם פריט","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק פריטים בודדים.' },
+      ],
+    }],
+    temperature: 0.1,
+    max_tokens: 1024,
+  }
+
+  // On native Android use CapacitorHttp (bypasses WebView network restrictions)
+  if (window.Capacitor?.isNativePlatform?.()) {
+    const { CapacitorHttp } = await import('@capacitor/core')
+    const res = await CapacitorHttp.request({
+      method: 'POST',
+      url: 'https://api.groq.com/openai/v1/chat/completions',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      data: payload,
+    })
+    if (res.status !== 200) throw new Error(`Groq ${res.status}`)
+    const text = res.data?.choices?.[0]?.message?.content || ''
+    return parseGroqResponse(text)
+  }
+
+  // Web fallback: regular fetch
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`Groq ${res.status}`)
+  const data = await res.json()
+  const text = data.choices?.[0]?.message?.content || ''
+  return parseGroqResponse(text)
 }
 
 // ─── Unit Price Logic ─────────────────────────────────────────────────────────
