@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { requestNotificationPermission, scheduleDailyReminder, cancelDailyReminder, checkWebNotificationTime, sendTestNotification } from './notifications.js'
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || localStorage.getItem('groq_api_key') || ''
+function getGroqKey() {
+  return import.meta.env.VITE_GROQ_API_KEY || localStorage.getItem('groq_api_key') || ''
+}
 import {
   ShoppingCart,
   History,
@@ -15,6 +17,7 @@ import {
   Check,
   AlertTriangle,
   Camera,
+  Settings,
 } from 'lucide-react'
 
 // ─── Storage ───────────────────────────────────────────────────────────────────
@@ -100,10 +103,12 @@ const CAT_COLOR = {
 
 // ─── Receipt Scanning (Groq Vision) ──────────────────────────────────────────
 async function scanReceiptWithGroq(imageDataUrl) {
+  const key = getGroqKey()
+  if (!key) throw new Error('missing_key')
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Authorization': `Bearer ${key}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -335,16 +340,20 @@ function TabShopping({ onSave }) {
         try {
           const extracted = await scanReceiptWithGroq(ev.target.result)
           if (extracted.length === 0) {
-            showToast('לא נמצאו מוצרים בקבלה, נסה שוב')
+            showToast('לא נמצאו פריטים בקבלה, נסה שוב')
           } else {
             setProducts(prev => {
               const filtered = prev.filter(p => p.name.trim())
               return [...filtered, ...extracted]
             })
-            showToast(`נמצאו ${extracted.length} מוצרים מהקבלה ✓`)
+            showToast(`נמצאו ${extracted.length} פריטים מהקבלה ✓`)
           }
-        } catch {
-          showToast('שגיאה בניתוח הקבלה — בדוק חיבור אינטרנט')
+        } catch (err) {
+          if (err.message === 'missing_key') {
+            showToast('⚠️ הגדר מפתח Groq בטאב הגדרות')
+          } else {
+            showToast('שגיאה בניתוח — בדוק חיבור אינטרנט')
+          }
         } finally {
           setScanning(false)
           if (cameraInputRef.current) cameraInputRef.current.value = ''
@@ -850,9 +859,6 @@ function TabAnalysis({ trips, monthlyBudget, onBudgetChange }) {
       {thisMonthTrips.length === 0 && (
         <EmptyState icon={TrendingDown} title="אין נתונים לחודש זה" subtitle="הוסף קניות כדי לראות ניתוח" />
       )}
-
-      {/* Notification settings */}
-      <NotificationCard />
     </div>
   )
 }
@@ -996,6 +1002,61 @@ function TabAlerts({ trips }) {
   )
 }
 
+// ─── TAB 5: הגדרות ────────────────────────────────────────────────────────────
+function TabSettings() {
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('groq_api_key') || '')
+  const [saved, setSaved] = useState(false)
+
+  function handleSave() {
+    localStorage.setItem('groq_api_key', apiKey.trim())
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Groq API Key */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+        <div>
+          <p className="font-semibold text-sm">מפתח Groq API</p>
+          <p className="text-xs text-gray-500 mt-0.5">נדרש לסריקת קבלות אוטומטית</p>
+        </div>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={e => setApiKey(e.target.value)}
+          placeholder="gsk_..."
+          className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm font-mono transition-colors"
+          dir="ltr"
+        />
+        <button
+          onClick={handleSave}
+          className={`w-full py-2.5 rounded-xl text-sm font-semibold active:scale-95 transition-all flex items-center justify-center gap-2 ${
+            saved ? 'bg-green-700' : 'bg-blue-600 hover:bg-blue-500'
+          }`}
+        >
+          {saved ? <><Check className="w-4 h-4" /> נשמר!</> : 'שמור מפתח'}
+        </button>
+        <p className="text-xs text-gray-600 text-center">
+          קבל מפתח חינמי בכתובת{' '}
+          <span className="text-blue-400">console.groq.com/keys</span>
+        </p>
+      </div>
+
+      {/* Info card */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-2">
+        <p className="font-semibold text-sm">איך סריקת קבלות עובדת?</p>
+        <p className="text-xs text-gray-400 leading-relaxed">
+          הצלם קבלה עם הכפתור "סרוק קבלה" בטאב קנייה. התמונה נשלחת ל-Groq Vision AI שמזהה את כל הפריטים והמחירים תוך 2-3 שניות ומוסיף אותם אוטומטית לרשימה.
+        </p>
+      </div>
+
+      {/* Notification settings */}
+      <NotificationCard />
+    </div>
+  )
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState] = useState(loadState)
@@ -1029,6 +1090,7 @@ export default function App() {
     { id: 'history', icon: History, label: 'היסטוריה', badge: state.trips.length || null },
     { id: 'analysis', icon: TrendingDown, label: 'ניתוח' },
     { id: 'alerts', icon: AlertCircle, label: 'התראות', badge: anomalyCount || null },
+    { id: 'settings', icon: Settings, label: 'הגדרות' },
   ]
 
   return (
@@ -1043,6 +1105,7 @@ export default function App() {
               {tab === 'history' && 'היסטוריית קניות'}
               {tab === 'analysis' && 'ניתוח הוצאות'}
               {tab === 'alerts' && 'חריגות מחיר'}
+              {tab === 'settings' && 'הגדרות אפליקציה'}
             </p>
           </div>
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-900/40">
@@ -1069,6 +1132,7 @@ export default function App() {
         {tab === 'alerts' && (
           <TabAlerts trips={state.trips} />
         )}
+        {tab === 'settings' && <TabSettings />}
       </main>
 
       {/* Bottom Navigation */}
