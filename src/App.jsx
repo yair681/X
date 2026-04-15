@@ -4,6 +4,28 @@ import { requestNotificationPermission, scheduleDailyReminder, cancelDailyRemind
 function getGroqKey() {
   return import.meta.env.VITE_GROQ_API_KEY || localStorage.getItem('groq_api_key') || ''
 }
+
+async function getGroqKeyAsync() {
+  if (import.meta.env.VITE_GROQ_API_KEY) return import.meta.env.VITE_GROQ_API_KEY
+  if (window.Capacitor?.isNativePlatform?.()) {
+    try {
+      const { Preferences } = await import('@capacitor/preferences')
+      const { value } = await Preferences.get({ key: 'groq_api_key' })
+      if (value) return value
+    } catch {}
+  }
+  return localStorage.getItem('groq_api_key') || ''
+}
+
+async function saveGroqKey(key) {
+  localStorage.setItem('groq_api_key', key)
+  if (window.Capacitor?.isNativePlatform?.()) {
+    try {
+      const { Preferences } = await import('@capacitor/preferences')
+      await Preferences.set({ key: 'groq_api_key', value: key })
+    } catch {}
+  }
+}
 import {
   ShoppingCart,
   History,
@@ -159,7 +181,7 @@ function parseGroqResponse(text) {
 }
 
 async function scanReceiptWithGroq(imageDataUrl) {
-  const key = getGroqKey()
+  const key = await getGroqKeyAsync()
   if (!key) throw new Error('missing_key')
 
   let compressed = imageDataUrl
@@ -408,8 +430,12 @@ function TabShopping({ onSave }) {
         } catch (err) {
           if (err.message === 'missing_key') {
             showToast('⚠️ הגדר מפתח Groq בטאב הגדרות')
+          } else if (err.message?.includes('401')) {
+            showToast('❌ מפתח Groq שגוי — בדוק בהגדרות')
+          } else if (err.message?.includes('429')) {
+            showToast('⏱️ חרגת ממגבלת Groq — נסה שוב עוד דקה')
           } else {
-            showToast('שגיאה בניתוח — בדוק חיבור אינטרנט')
+            showToast(`שגיאה: ${err.message || 'בדוק חיבור אינטרנט'}`)
           }
         } finally {
           setScanning(false)
@@ -1061,11 +1087,26 @@ function TabAlerts({ trips }) {
 
 // ─── TAB 5: הגדרות ────────────────────────────────────────────────────────────
 function TabSettings() {
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('groq_api_key') || '')
+  const [apiKey, setApiKey] = useState('')
   const [saved, setSaved] = useState(false)
+  const [showKey, setShowKey] = useState(false)
+  const [keyStatus, setKeyStatus] = useState('') // 'ok' | 'missing'
 
-  function handleSave() {
-    localStorage.setItem('groq_api_key', apiKey.trim())
+  useEffect(() => {
+    getGroqKeyAsync().then(k => {
+      if (k) {
+        setApiKey(k)
+        setKeyStatus('ok')
+      } else {
+        setKeyStatus('missing')
+      }
+    })
+  }, [])
+
+  async function handleSave() {
+    const trimmed = apiKey.trim()
+    await saveGroqKey(trimmed)
+    setKeyStatus(trimmed ? 'ok' : 'missing')
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -1074,18 +1115,30 @@ function TabSettings() {
     <div className="space-y-4">
       {/* Groq API Key */}
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
-        <div>
-          <p className="font-semibold text-sm">מפתח Groq API</p>
-          <p className="text-xs text-gray-500 mt-0.5">נדרש לסריקת קבלות אוטומטית</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-semibold text-sm">מפתח Groq API</p>
+            <p className="text-xs text-gray-500 mt-0.5">נדרש לסריקת קבלות אוטומטית</p>
+          </div>
+          {keyStatus === 'ok' && <span className="text-xs bg-green-900 text-green-400 px-2 py-0.5 rounded-full">פעיל ✓</span>}
+          {keyStatus === 'missing' && <span className="text-xs bg-red-900 text-red-400 px-2 py-0.5 rounded-full">חסר</span>}
         </div>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-          placeholder="gsk_..."
-          className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm font-mono transition-colors"
-          dir="ltr"
-        />
+        <div className="relative">
+          <input
+            type={showKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            placeholder="gsk_..."
+            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm font-mono transition-colors pr-16"
+            dir="ltr"
+          />
+          <button
+            onClick={() => setShowKey(v => !v)}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 px-2 py-1 bg-gray-700 rounded-lg"
+          >
+            {showKey ? 'הסתר' : 'הצג'}
+          </button>
+        </div>
         <button
           onClick={handleSave}
           className={`w-full py-2.5 rounded-xl text-sm font-semibold active:scale-95 transition-all flex items-center justify-center gap-2 ${
