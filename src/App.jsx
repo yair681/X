@@ -20,12 +20,34 @@ import {
   Settings,
 } from 'lucide-react'
 
-// ─── Storage ───────────────────────────────────────────────────────────────────
+// ─── Storage (Capacitor Preferences + localStorage fallback) ──────────────────
 const STORAGE_KEY = 'supermarket_budget_v2'
 
-const DEFAULT_STATE = {
-  trips: [],
-  monthlyBudget: 3000,
+const DEFAULT_STATE = { trips: [], monthlyBudget: 3000 }
+
+async function saveToStorage(data) {
+  try {
+    const json = JSON.stringify(data)
+    localStorage.setItem(STORAGE_KEY, json)
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const { Preferences } = await import('@capacitor/preferences')
+      await Preferences.set({ key: STORAGE_KEY, value: json })
+    }
+  } catch (e) { console.warn('save error', e) }
+}
+
+async function loadFromStorage() {
+  try {
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const { Preferences } = await import('@capacitor/preferences')
+      const { value } = await Preferences.get({ key: STORAGE_KEY })
+      if (value) return { ...DEFAULT_STATE, ...JSON.parse(value) }
+    }
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? { ...DEFAULT_STATE, ...JSON.parse(raw) } : DEFAULT_STATE
+  } catch {
+    return DEFAULT_STATE
+  }
 }
 
 function loadState() {
@@ -101,10 +123,29 @@ const CAT_COLOR = {
   luxury: 'bg-red-900/60 text-red-400 border-red-800',
 }
 
+// ─── Image compression ────────────────────────────────────────────────────────
+async function compressImage(dataUrl, maxPx = 1200) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height))
+      const w = Math.round(img.width * scale)
+      const h = Math.round(img.height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', 0.82))
+    }
+    img.src = dataUrl
+  })
+}
+
 // ─── Receipt Scanning (Groq Vision) ──────────────────────────────────────────
 async function scanReceiptWithGroq(imageDataUrl) {
   const key = getGroqKey()
   if (!key) throw new Error('missing_key')
+  const compressed = await compressImage(imageDataUrl)
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -117,7 +158,7 @@ async function scanReceiptWithGroq(imageDataUrl) {
         {
           role: 'user',
           content: [
-            { type: 'image_url', image_url: { url: imageDataUrl } },
+            { type: 'image_url', image_url: { url: compressed } },
             {
               type: 'text',
               text: 'זוהי קבלה / חשבונית. חלץ את כל הפריטים עם המחירים שלהם. החזר JSON בלבד: {"products":[{"name":"שם פריט","price":12.90}]}. אל תכלול שורות של סה"כ, מע"מ, הנחה, עודף, שולם. רק פריטים בודדים.',
@@ -1062,13 +1103,16 @@ export default function App() {
   const [state, setState] = useState(loadState)
   const [tab, setTab] = useState('shopping')
 
+  // Load from Capacitor Preferences on native (overrides localStorage if found)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [state])
-
-  useEffect(() => {
+    loadFromStorage().then(loaded => setState(loaded))
     checkWebNotificationTime()
   }, [])
+
+  // Save on every state change — both localStorage and Preferences
+  useEffect(() => {
+    saveToStorage(state)
+  }, [state])
 
   const handleSaveTrip = useCallback((trip) => {
     setState((prev) => ({ ...prev, trips: [trip, ...prev.trips] }))
