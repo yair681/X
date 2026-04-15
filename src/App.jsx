@@ -48,7 +48,7 @@ import {
 // ─── Storage (Capacitor Preferences + localStorage fallback) ──────────────────
 const STORAGE_KEY = 'supermarket_budget_v2'
 
-const DEFAULT_STATE = { trips: [], monthlyBudget: 3000 }
+const DEFAULT_STATE = { trips: [], monthlyBudget: 3000, customCategories: [] }
 
 async function saveToStorage(data) {
   try {
@@ -141,6 +141,46 @@ function categorize(name) {
   return 'convenience'
 }
 
+const DEFAULT_CATEGORIES = [
+  { id: 'basics', label: 'הכרחי', color: 'green' },
+  { id: 'convenience', label: 'נוחות', color: 'orange' },
+  { id: 'luxury', label: 'מותרות', color: 'red' },
+]
+
+const COLOR_OPTIONS = ['green','orange','red','blue','purple','yellow','pink','cyan','teal','indigo']
+
+const COLOR_CLASSES = {
+  green:  'bg-green-900/60 text-green-400 border-green-800',
+  orange: 'bg-orange-900/60 text-orange-400 border-orange-800',
+  red:    'bg-red-900/60 text-red-400 border-red-800',
+  blue:   'bg-blue-900/60 text-blue-400 border-blue-800',
+  purple: 'bg-purple-900/60 text-purple-400 border-purple-800',
+  yellow: 'bg-yellow-900/60 text-yellow-400 border-yellow-800',
+  pink:   'bg-pink-900/60 text-pink-400 border-pink-800',
+  cyan:   'bg-cyan-900/60 text-cyan-400 border-cyan-800',
+  teal:   'bg-teal-900/60 text-teal-400 border-teal-800',
+  indigo: 'bg-indigo-900/60 text-indigo-400 border-indigo-800',
+}
+
+const COLOR_DOT = {
+  green:'bg-green-400', orange:'bg-orange-400', red:'bg-red-400', blue:'bg-blue-400',
+  purple:'bg-purple-400', yellow:'bg-yellow-400', pink:'bg-pink-400', cyan:'bg-cyan-400',
+  teal:'bg-teal-400', indigo:'bg-indigo-400',
+}
+
+function getCatLabel(categories, id) {
+  return categories.find(c => c.id === id)?.label || id
+}
+function getCatColorClass(categories, id) {
+  const cat = categories.find(c => c.id === id)
+  return COLOR_CLASSES[cat?.color] || COLOR_CLASSES.orange
+}
+function getCatDot(categories, id) {
+  const cat = categories.find(c => c.id === id)
+  return COLOR_DOT[cat?.color] || COLOR_DOT.orange
+}
+
+// Legacy fallbacks (still used in auto-categorize output)
 const CAT_LABEL = { basics: 'הכרחי', convenience: 'נוחות', luxury: 'מותרות' }
 const CAT_COLOR = {
   basics: 'bg-green-900/60 text-green-400 border-green-800',
@@ -402,7 +442,7 @@ function emptyProduct() {
 const UNITS = ['יח\'', 'ק"ג', 'ל', 'גרם', 'מ"ל']
 
 // ─── Scan Review Modal ────────────────────────────────────────────────────────
-function ScanReviewModal({ result, onConfirm, onCancel }) {
+function ScanReviewModal({ result, onConfirm, onCancel, categories }) {
   const [items, setItems] = useState(result.products)
   const [storeName, setStoreName] = useState(result.store)
 
@@ -455,8 +495,8 @@ function ScanReviewModal({ result, onConfirm, onCancel }) {
                 onChange={e => updateItem(p.id, 'name', e.target.value)}
                 className="flex-1 bg-gray-700 rounded-lg px-2.5 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500"
               />
-              <span className={`text-xs px-2 py-1 rounded-lg border font-medium whitespace-nowrap ${CAT_COLOR[p.category]}`}>
-                {CAT_LABEL[p.category]}
+              <span className={`text-xs px-2 py-1 rounded-lg border font-medium whitespace-nowrap ${getCatColorClass(categories, p.category)}`}>
+                {getCatLabel(categories, p.category)}
               </span>
               <button onClick={() => removeItem(p.id)} className="w-7 h-7 bg-red-950/60 rounded-lg flex items-center justify-center">
                 <Trash2 className="w-3.5 h-3.5 text-red-400" />
@@ -479,9 +519,7 @@ function ScanReviewModal({ result, onConfirm, onCancel }) {
                 onChange={e => updateItem(p.id, 'category', e.target.value)}
                 className="bg-gray-700 rounded-lg px-2 py-1.5 text-xs text-white outline-none"
               >
-                <option value="basics">הכרחי</option>
-                <option value="convenience">נוחות</option>
-                <option value="luxury">מותרות</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </div>
           </div>
@@ -513,7 +551,7 @@ function ScanReviewModal({ result, onConfirm, onCancel }) {
 }
 
 // ─── TAB 1: קנייה ─────────────────────────────────────────────────────────────
-function TabShopping({ onSave }) {
+function TabShopping({ onSave, categories }) {
   const [date, setDate] = useState(todayISO())
   const [store, setStore] = useState('')
   const [products, setProducts] = useState([emptyProduct()])
@@ -679,9 +717,13 @@ function TabShopping({ onSave }) {
                   placeholder={`מוצר ${idx + 1}`}
                   className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm transition-colors"
                 />
-                <span className={`text-xs px-2 py-1 rounded-lg border font-medium whitespace-nowrap ${CAT_COLOR[p.category]}`}>
-                  {CAT_LABEL[p.category]}
-                </span>
+                <select
+                  value={p.category}
+                  onChange={e => updateProduct(p.id, 'category', e.target.value)}
+                  className={`text-xs px-2 py-1 rounded-lg border font-medium ${getCatColorClass(categories, p.category)} bg-transparent outline-none`}
+                >
+                  {categories.map(c => <option key={c.id} value={c.id} className="bg-gray-900 text-white">{c.label}</option>)}
+                </select>
               </div>
               {/* Row 2: qty + unit + price + unit price + trash */}
               <div className="flex items-center gap-1.5">
@@ -806,6 +848,7 @@ function TabShopping({ onSave }) {
           result={scannedResult}
           onConfirm={confirmScannedResult}
           onCancel={() => setScannedResult(null)}
+          categories={categories}
         />
       )}
 
@@ -1226,7 +1269,7 @@ function TabAlerts({ trips }) {
 }
 
 // ─── TAB 5: הגדרות ────────────────────────────────────────────────────────────
-function TabSettings() {
+function TabSettings({ customCategories, onCategoriesChange }) {
   const [apiKey, setApiKey] = useState('')
   const [saved, setSaved] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -1301,8 +1344,73 @@ function TabSettings() {
         </p>
       </div>
 
+      {/* Categories management */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+        <p className="font-semibold text-sm">ניהול קטגוריות</p>
+        {/* Default categories */}
+        <div className="space-y-1">
+          {DEFAULT_CATEGORIES.map(c => (
+            <div key={c.id} className="flex items-center gap-2 py-1.5">
+              <span className={`w-3 h-3 rounded-full ${COLOR_DOT[c.color]}`} />
+              <span className="text-sm flex-1">{c.label}</span>
+              <span className="text-xs text-gray-600">ברירת מחדל</span>
+            </div>
+          ))}
+          {customCategories.map(c => (
+            <div key={c.id} className="flex items-center gap-2 py-1.5">
+              <span className={`w-3 h-3 rounded-full ${COLOR_DOT[c.color]}`} />
+              <span className="text-sm flex-1">{c.label}</span>
+              <button
+                onClick={() => onCategoriesChange(customCategories.filter(x => x.id !== c.id))}
+                className="text-xs text-red-400 px-2 py-0.5 rounded-lg bg-red-950/40"
+              >מחק</button>
+            </div>
+          ))}
+        </div>
+        <AddCategoryForm onAdd={c => onCategoriesChange([...customCategories, c])} />
+      </div>
+
       {/* Notification settings */}
       <NotificationCard />
+    </div>
+  )
+}
+
+function AddCategoryForm({ onAdd }) {
+  const [label, setLabel] = useState('')
+  const [color, setColor] = useState('blue')
+  function handleAdd() {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    onAdd({ id: `custom_${Date.now()}`, label: trimmed, color })
+    setLabel('')
+  }
+  return (
+    <div className="space-y-2 pt-1 border-t border-gray-800">
+      <p className="text-xs text-gray-500">הוסף קטגוריה חדשה</p>
+      <input
+        type="text"
+        value={label}
+        onChange={e => setLabel(e.target.value)}
+        placeholder="שם הקטגוריה..."
+        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+      />
+      <div className="flex gap-1.5 flex-wrap">
+        {COLOR_OPTIONS.map(c => (
+          <button
+            key={c}
+            onClick={() => setColor(c)}
+            className={`w-6 h-6 rounded-full ${COLOR_DOT[c]} ${color === c ? 'ring-2 ring-white ring-offset-1 ring-offset-gray-900' : ''}`}
+          />
+        ))}
+      </div>
+      <button
+        onClick={handleAdd}
+        disabled={!label.trim()}
+        className="w-full py-2 rounded-xl text-sm font-semibold bg-blue-600 disabled:opacity-40 active:scale-95"
+      >
+        + הוסף קטגוריה
+      </button>
     </div>
   )
 }
@@ -1394,6 +1502,135 @@ export async function generateDailyTip(trips, monthlyBudget) {
   } catch {
     return null
   }
+}
+
+// ─── TAB: השוואת קניות ───────────────────────────────────────────────────────
+function TabCompare({ trips, categories }) {
+  if (trips.length === 0) {
+    return <EmptyState icon={TrendingDown} title="אין נתונים להשוואה" subtitle="הוסף לפחות 2 קניות מחנויות שונות" />
+  }
+
+  // ── Store stats ──
+  const storeMap = {}
+  trips.forEach(t => {
+    if (!storeMap[t.store]) storeMap[t.store] = { total: 0, visits: 0, products: [] }
+    storeMap[t.store].total += t.total
+    storeMap[t.store].visits += 1
+    storeMap[t.store].products.push(...t.products)
+  })
+  const stores = Object.entries(storeMap)
+    .map(([name, d]) => ({ name, total: d.total, visits: d.visits, avg: d.total / d.visits, products: d.products }))
+    .sort((a, b) => b.total - a.total)
+
+  const maxTotal = stores[0]?.total || 1
+
+  // ── Category breakdown per store ──
+  const catIds = categories.map(c => c.id)
+
+  // ── Common products across stores (appear in 2+ stores) ──
+  const productStoreMap = {}
+  trips.forEach(t => {
+    t.products.forEach(p => {
+      const key = p.name.trim().toLowerCase()
+      if (!productStoreMap[key]) productStoreMap[key] = {}
+      if (!productStoreMap[key][t.store]) productStoreMap[key][t.store] = []
+      productStoreMap[key][t.store].push(p.price)
+    })
+  })
+  const commonProducts = Object.entries(productStoreMap)
+    .filter(([, byStore]) => Object.keys(byStore).length >= 2)
+    .map(([name, byStore]) => ({
+      name,
+      byStore: Object.fromEntries(Object.entries(byStore).map(([s, prices]) => [s, prices.reduce((a,b)=>a+b)/prices.length]))
+    }))
+    .slice(0, 8)
+
+  return (
+    <div className="space-y-4">
+      {/* Store cards */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-4">
+        <h3 className="font-semibold text-sm text-gray-300">הוצאה לפי חנות</h3>
+        {stores.map(s => (
+          <div key={s.name} className="space-y-1.5">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium">{s.name}</span>
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                <span>{s.visits} קניות</span>
+                <span>ממוצע ₪{fmt(s.avg)}</span>
+                <span className="text-white font-semibold">₪{fmt(s.total)}</span>
+              </div>
+            </div>
+            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-600 rounded-full" style={{ width: `${(s.total / maxTotal) * 100}%` }} />
+            </div>
+            {/* Category breakdown */}
+            <div className="flex gap-2 flex-wrap">
+              {catIds.map(cid => {
+                const catTotal = s.products.filter(p => p.category === cid).reduce((a, p) => a + p.price, 0)
+                if (catTotal === 0) return null
+                return (
+                  <span key={cid} className={`text-xs px-2 py-0.5 rounded-lg border ${getCatColorClass(categories, cid)}`}>
+                    {getCatLabel(categories, cid)} ₪{fmt(catTotal)}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Common products comparison */}
+      {commonProducts.length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+          <h3 className="font-semibold text-sm text-gray-300">מחיר אותם מוצרים בחנויות שונות</h3>
+          {commonProducts.map(({ name, byStore }) => {
+            const prices = Object.values(byStore)
+            const minPrice = Math.min(...prices)
+            return (
+              <div key={name} className="space-y-1">
+                <p className="text-sm font-medium capitalize">{name}</p>
+                <div className="flex gap-2 flex-wrap">
+                  {Object.entries(byStore).map(([store, price]) => (
+                    <span key={store} className={`text-xs px-2 py-1 rounded-lg border ${price === minPrice ? 'bg-green-900/60 text-green-400 border-green-700' : 'bg-gray-800 text-gray-400 border-gray-700'}`}>
+                      {store}: ₪{fmt(price)} {price === minPrice ? '✓' : ''}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-xs text-gray-600">✓ = מחיר הכי זול</p>
+        </div>
+      )}
+
+      {/* Monthly spending per store */}
+      {stores.length >= 2 && (() => {
+        const months = [...new Set(trips.map(t => t.date.slice(0, 7)))].sort().slice(-4)
+        return (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+            <h3 className="font-semibold text-sm text-gray-300">הוצאה חודשית לפי חנות</h3>
+            {months.map(month => {
+              const monthTrips = trips.filter(t => t.date.startsWith(month))
+              const byStore = {}
+              monthTrips.forEach(t => { byStore[t.store] = (byStore[t.store] || 0) + t.total })
+              return (
+                <div key={month} className="space-y-1">
+                  <p className="text-xs text-gray-500">{month}</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {Object.entries(byStore).map(([s, v]) => (
+                      <span key={s} className="text-xs bg-gray-800 border border-gray-700 px-2 py-1 rounded-lg">
+                        {s}: ₪{fmt(v)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })()}
+    </div>
+  )
 }
 
 // ─── TAB: צ'אט AI ─────────────────────────────────────────────────────────────
@@ -1567,13 +1804,18 @@ export default function App() {
     setState((prev) => ({ ...prev, monthlyBudget: val }))
   }, [])
 
+  const handleCategoriesChange = useCallback((newCustom) => {
+    setState((prev) => ({ ...prev, customCategories: newCustom }))
+  }, [])
+
+  const categories = [...DEFAULT_CATEGORIES, ...(state.customCategories || [])]
   const anomalyCount = detectAnomalies(state.trips).length
 
   const NAV_TABS = [
     { id: 'shopping', icon: ShoppingCart, label: 'קנייה' },
     { id: 'history', icon: History, label: 'היסטוריה' },
-    { id: 'chat', icon: MessageSquare, label: 'AI צ\'אט' },
-    { id: 'analysis', icon: TrendingDown, label: 'ניתוח' },
+    { id: 'compare', icon: TrendingDown, label: 'השוואה' },
+    { id: 'chat', icon: MessageSquare, label: "AI" },
     { id: 'alerts', icon: AlertCircle, label: 'התראות', badge: anomalyCount || null },
     { id: 'settings', icon: Settings, label: 'הגדרות' },
   ]
@@ -1588,6 +1830,7 @@ export default function App() {
             <p className="text-xs text-gray-500 mt-0.5">
               {tab === 'shopping' && 'הוסף קנייה חדשה'}
               {tab === 'history' && 'היסטוריית קניות'}
+              {tab === 'compare' && 'השוואת קניות וחנויות'}
               {tab === 'analysis' && 'ניתוח הוצאות'}
               {tab === 'chat' && 'עוזר AI מותאם אישית'}
               {tab === 'alerts' && 'חריגות מחיר'}
@@ -1603,10 +1846,13 @@ export default function App() {
       {/* Main content */}
       <main className="max-w-md mx-auto px-4 pt-4 pb-28">
         {tab === 'shopping' && (
-          <TabShopping onSave={handleSaveTrip} />
+          <TabShopping onSave={handleSaveTrip} categories={categories} />
         )}
         {tab === 'history' && (
           <TabHistory trips={state.trips} onDelete={handleDeleteTrip} />
+        )}
+        {tab === 'compare' && (
+          <TabCompare trips={state.trips} categories={categories} />
         )}
         {tab === 'analysis' && (
           <TabAnalysis
@@ -1621,7 +1867,12 @@ export default function App() {
         {tab === 'alerts' && (
           <TabAlerts trips={state.trips} />
         )}
-        {tab === 'settings' && <TabSettings />}
+        {tab === 'settings' && (
+          <TabSettings
+            customCategories={state.customCategories || []}
+            onCategoriesChange={handleCategoriesChange}
+          />
+        )}
       </main>
 
       {/* Luxury alert toast */}
